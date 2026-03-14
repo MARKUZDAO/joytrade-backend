@@ -1,44 +1,59 @@
-import { WebSocketGateway, OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
+import { WebSocketGateway, OnGatewayInit } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
-import * as WebSocket from 'ws';
+import WebSocket from 'ws'; // Исправленный, правильный способ импорта
 
 @WebSocketGateway()
-export class PacificaGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+export class PacificaGateway implements OnGatewayInit {
   private readonly logger = new Logger(PacificaGateway.name);
   private ws: WebSocket;
-  public latestPrice: number = 0;
+  public latestBtcPrice: number = 0;
 
   // Этот метод сработает, как только наш backend запустится
   afterInit() {
-    this.logger.log('Pacifica Gateway Initialized. Connecting to WebSocket...');
+    this.logger.log('Pacifica Gateway Initialized. Connecting to Testnet WebSocket...');
     this.connect();
   }
 
   connect() {
-    // ВАЖНО: Этот URL нужно будет заменить на реальный WebSocket URL от Pacifica
-    // Я предполагаю, что он может выглядеть так, но нужно уточнить в документации.
-    const pacificaWsUrl = 'wss://api.pacifica.exchange/v1/stream'; // Пример!
+    // Правильный URL для Тестнета из вашей документации
+    const pacificaTestnetWsUrl = 'wss://test-ws.pacifica.fi/ws';
 
-    this.ws = new WebSocket(pacificaWsUrl);
+    this.ws = new WebSocket(pacificaTestnetWsUrl);
 
     this.ws.on('open', () => {
-      this.logger.log('Connected to Pacifica WebSocket!');
-      // После подключения, подписываемся на поток цен BTC
-      this.ws.send(JSON.stringify({
-        op: 'subscribe',
-        channel: 'ticker',
-        market: 'BTC-USD'
-      }));
+      this.logger.log('SUCCESS: Connected to Pacifica Testnet WebSocket!');
+      
+      // Отправляем правильное сообщение для подписки на цены
+      const subscriptionMessage = {
+        method: 'subscribe',
+        params: {
+          source: 'prices'
+        }
+      };
+
+      this.ws.send(JSON.stringify(subscriptionMessage));
+      this.logger.log('Subscription message sent: ' + JSON.stringify(subscriptionMessage));
     });
 
     this.ws.on('message', (data: WebSocket.Data) => {
       try {
         const message = JSON.parse(data.toString());
-        // Ищем в сообщении цену. Структура может быть другой!
-        if (message.channel === 'ticker' && message.data?.last) {
-          this.latestPrice = parseFloat(message.data.last);
-          // Просто выводим в лог, чтобы видеть, что цены приходят
-          this.logger.log(`New BTC Price: ${this.latestPrice}`);
+        
+        // Ищем в сообщении наш канал "prices"
+        if (message.channel === 'prices' && message.data) {
+          
+          // message.data - это массив. Ищем в нем объект для BTC.
+          const btcData = message.data.find(item => item.symbol === 'BTC');
+
+          if (btcData) {
+            // Используем "mark price" как основную цену
+            this.latestBtcPrice = parseFloat(btcData.mark);
+            // Просто выводим в лог, чтобы видеть, что цены приходят
+            // Логируем не каждую цену, а раз в 2 секунды, чтобы не засорять лог
+            if (Math.random() < 0.1) { // Это простой способ логировать реже
+               this.logger.log(`New BTC Mark Price: ${this.latestBtcPrice}`);
+            }
+          }
         }
       } catch (error) {
         this.logger.error('Failed to parse WebSocket message', error);
@@ -46,20 +61,12 @@ export class PacificaGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     });
 
     this.ws.on('error', (error) => {
-      this.logger.error('Pacifica WebSocket error:', error);
+      this.logger.error('Pacifica WebSocket error:', error.message);
     });
 
-    this.ws.on('close', () => {
-      this.logger.warn('Pacifica WebSocket connection closed. Reconnecting in 5 seconds...');
+    this.ws.on('close', (code, reason) => {
+      this.logger.warn(`Pacifica WebSocket connection closed. Code: ${code}, Reason: ${reason}. Reconnecting in 5 seconds...`);
       setTimeout(() => this.connect(), 5000); // Пытаемся переподключиться через 5 сек
     });
-  }
-
-  handleConnection(client: any) {
-    this.logger.log(`Client connected: ${client.id}`);
-  }
-
-  handleDisconnect(client: any) {
-    this.logger.log(`Client disconnected: ${client.id}`);
   }
 }
